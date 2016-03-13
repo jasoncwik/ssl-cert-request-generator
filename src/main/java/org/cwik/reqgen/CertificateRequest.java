@@ -1,24 +1,35 @@
 package org.cwik.reqgen;
 
-import java.io.IOException;
+import java.io.*;
 import java.security.KeyPair;
 import java.security.Provider;
+import java.util.ArrayList;
 import java.util.List;
 
+import org.bouncycastle.asn1.DEROctetString;
+import org.bouncycastle.asn1.DERSet;
+import org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers;
 import org.bouncycastle.asn1.x500.X500NameBuilder;
 import org.bouncycastle.asn1.x500.style.BCStyle;
+import org.bouncycastle.asn1.x509.*;
 import org.bouncycastle.operator.ContentSigner;
 import org.bouncycastle.operator.OperatorCreationException;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import org.bouncycastle.pkcs.PKCS10CertificationRequest;
 import org.bouncycastle.pkcs.PKCS10CertificationRequestBuilder;
 import org.bouncycastle.pkcs.jcajce.JcaPKCS10CertificationRequestBuilder;
+import org.bouncycastle.pqc.math.linearalgebra.Vector;
 import org.bouncycastle.util.encoders.Base64;
+import org.bouncycastle.util.io.pem.PemObject;
+import org.bouncycastle.util.io.pem.PemWriter;
 
 /**
  * Created by cwikj on 3/12/16.
  */
 public class CertificateRequest {
+    public static final String PEM_DESC_RSA_PRIV_KEY = "RSA PRIVATE KEY";
+    public static final String PEM_DESC_CERT_REQ = "CERTIFICATE REQUEST";
+
     private KeyPair siginingKey;
     private String subject;
     private List<String> ipSubjectAlternativeNames;
@@ -130,40 +141,76 @@ public class CertificateRequest {
             throw new RuntimeException("Could not construct content signer.", e);
         }
 
-        X500NameBuilder xb = new X500NameBuilder().addRDN(BCStyle.CN, subject)
+        X500NameBuilder xb = new X500NameBuilder()
                 .addRDN(BCStyle.C, country)
-                .addRDN(BCStyle.L, locality)
                 .addRDN(BCStyle.ST, stateOrProvence)
+                .addRDN(BCStyle.L, locality)
                 .addRDN(BCStyle.O, organization)
-                .addRDN(BCStyle.OU, organizationalUnit);
+                .addRDN(BCStyle.OU, organizationalUnit)
+                .addRDN(BCStyle.CN, subject);
         if(emailAddress != null) {
             xb.addRDN(BCStyle.EmailAddress, emailAddress);
         }
 
+        List<GeneralName> sans = new ArrayList<GeneralName>();
+        if(dnsSubjectAlternativeNames != null) {
+            for(String dnsName : dnsSubjectAlternativeNames) {
+                sans.add(new GeneralName(GeneralName.dNSName, dnsName));
+            }
+        }
+        if(ipSubjectAlternativeNames != null) {
+            for(String ipAddr : ipSubjectAlternativeNames) {
+                sans.add(new GeneralName(GeneralName.iPAddress, ipAddr));
+            }
+        }
+
         PKCS10CertificationRequestBuilder builder = new JcaPKCS10CertificationRequestBuilder(xb.build(), siginingKey.getPublic());
+
+        // Add Subject Alternative Names
+        if(sans.size() > 0) {
+            GeneralNamesBuilder gnb = new GeneralNamesBuilder();
+            for(GeneralName n : sans) {
+                gnb.addName(n);
+            }
+
+            Extension san;
+            try {
+                san = new Extension(Extension.subjectAlternativeName, false, new DEROctetString(gnb.build()));
+            } catch (IOException e) {
+                throw new RuntimeException("Could not encode SAN attribute");
+            }
+            Extensions extensions = new Extensions(san);
+
+            builder.addAttribute(PKCSObjectIdentifiers.pkcs_9_at_extensionRequest,
+                    extensions);
+        }
+
         return builder.build(signer);
     }
 
-    public static String getPEMEncoded(PKCS10CertificationRequest request) {
-        byte[] b64 = new byte[0];
-        try {
-            b64 = Base64.encode(request.getEncoded());
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to encode Base64 data", e);
-        }
-        StringBuilder sb = new StringBuilder();
-        sb.append("-----BEGIN CERTIFICATE REQUEST-----\n");
-        String s = new String(b64);
-        // Break into 64 character lines.
-        for(int i=0; i<s.length(); i+=64) {
-            int last = i+64;
-            if(last > s.length()) {
-                last = s.length();
-            }
-            sb.append(s.substring(i, last));
-            sb.append("\n");
-        }
-        sb.append("-----END CERTIFICATE REQUEST-----\n");
-        return sb.toString();
+    /**
+     * Make the certificate request into PEM-encoded text.
+     */
+    public static byte[] getPEMEncoded(PKCS10CertificationRequest request) throws IOException {
+        PemObject po = new PemObject(PEM_DESC_CERT_REQ, request.getEncoded());
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        PemWriter pemWriter = new PemWriter(new OutputStreamWriter(baos));
+        pemWriter.writeObject(po);
+        pemWriter.close();
+        return baos.toByteArray();
+    }
+
+    /**
+     * Writes the given data to a file in PEM format
+     * @param data the data to write
+     * @param description the PEM file description, e.g. "RSA PRIVATE KEY"
+     * @param file the file to output the PEM data to
+     * @throws Exception if an error occurs writing the data
+     */
+    public static void writePemFile(byte[] data, String description, File file) throws Exception {
+        PemObject po = new PemObject(description, data);
+        PemWriter pemWriter = new PemWriter(new FileWriter(file));
+        pemWriter.writeObject(po);
+        pemWriter.close();
     }
 }
