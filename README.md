@@ -5,7 +5,7 @@ Subject Alternative Name entries.  So, this project uses the BouncyCastle librar
 and implement SAN support.  I've tried to keep the CLI syntax as close to "openssl req" as possible.
 
 # License
-Copyright (c) 2016, Jason Cwik
+Copyright (c) 2016, Jason Cwik.
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without modification, are permitted provided that the
